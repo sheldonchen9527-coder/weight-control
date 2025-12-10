@@ -1,0 +1,328 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>体重记录小工具</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 16px;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin: 0 0 12px;
+      text-align: center;
+    }
+    .card {
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.9rem;
+    }
+    input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+    }
+    button {
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: none;
+      font-size: 0.95rem;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    #status {
+      margin-top: 6px;
+      font-size: 0.85rem;
+    }
+    .stat-line {
+      margin: 2px 0;
+      font-size: 0.9rem;
+    }
+    canvas {
+      width: 100%;
+      max-width: 600px;
+      height: 260px;
+    }
+    .muted {
+      color: #666;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>体重记录小工具</h1>
+
+  <div class="card">
+    <label for="weightInput">今天体重（kg）：</label>
+    <input type="number" id="weightInput" step="0.1" placeholder="例如 63.5" />
+    <button id="saveBtn">保存今天</button>
+    <button id="clearBtn">清除所有数据</button>
+    <div id="status" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:1.05rem;margin-top:0;">统计</h2>
+    <div id="stats">
+      <div class="stat-line">记录天数：<span id="daysCount">0</span></div>
+      <div class="stat-line">最轻体重：<span id="minWeight">-</span></div>
+      <div class="stat-line">最重体重：<span id="maxWeight">-</span></div>
+      <div class="stat-line">平均体重：<span id="avgWeight">-</span></div>
+      <div class="stat-line">总体变化：<span id="overallChange">-</span></div>
+      <div class="stat-line">最近 7 天变化：<span id="weekChange">-</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:1.05rem;margin-top:0;">最近 30 天折线图</h2>
+    <p class="muted">提示：数据保存在本机浏览器（localStorage），不会上传网络。</p>
+    <canvas id="chartCanvas"></canvas>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "weight-tracker-data-v1";
+
+    function loadData() {
+      try {
+        const txt = localStorage.getItem(STORAGE_KEY);
+        if (!txt) return [];
+        const arr = JSON.parse(txt);
+        if (!Array.isArray(arr)) return [];
+        return arr;
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveData(data) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    function formatDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function renderStats(data) {
+      const daysCountEl = document.getElementById("daysCount");
+      const minWeightEl = document.getElementById("minWeight");
+      const maxWeightEl = document.getElementById("maxWeight");
+      const avgWeightEl = document.getElementById("avgWeight");
+      const overallChangeEl = document.getElementById("overallChange");
+      const weekChangeEl = document.getElementById("weekChange");
+
+      if (!data.length) {
+        daysCountEl.textContent = "0";
+        minWeightEl.textContent = "-";
+        maxWeightEl.textContent = "-";
+        avgWeightEl.textContent = "-";
+        overallChangeEl.textContent = "-";
+        weekChangeEl.textContent = "-";
+        drawChart([]);
+        return;
+      }
+
+      data.sort((a, b) => a.date.localeCompare(b.date));
+
+      const weights = data.map(d => d.weight);
+      const days = data.map(d => d.date);
+
+      const sum = weights.reduce((a, b) => a + b, 0);
+      const avg = sum / weights.length;
+      const min = Math.min(...weights);
+      const max = Math.max(...weights);
+      const overallChange = weights[weights.length - 1] - weights[0];
+
+      daysCountEl.textContent = String(data.length);
+      minWeightEl.textContent = min.toFixed(1) + " kg";
+      maxWeightEl.textContent = max.toFixed(1) + " kg";
+      avgWeightEl.textContent = avg.toFixed(1) + " kg";
+      overallChangeEl.textContent = (overallChange >= 0 ? "+" : "") + overallChange.toFixed(1) + " kg";
+
+      // 最近 7 天变化
+      if (data.length >= 7) {
+        const base = weights[weights.length - 7];
+        const last = weights[weights.length - 1];
+        const diff = last - base;
+        weekChangeEl.textContent = (diff >= 0 ? "+" : "") + diff.toFixed(1) + " kg";
+      } else {
+        weekChangeEl.textContent = "记录少于 7 天";
+      }
+
+      // 画最近 30 天图表
+      const last30 = data.slice(-30);
+      drawChart(last30);
+    }
+
+    function drawChart(data) {
+      const canvas = document.getElementById("chartCanvas");
+      const ctx = canvas.getContext("2d");
+
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+
+      canvas.width = width * window.devicePixelRatio;
+      canvas.height = height * window.devicePixelRatio;
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+      ctx.clearRect(0, 0, width, height);
+
+      if (!data.length) {
+        ctx.fillStyle = "#666";
+        ctx.font = "14px -apple-system, BlinkMacSystemFont, 'Segoe UI'";
+        ctx.fillText("暂无数据", 10, 24);
+        return;
+      }
+
+      const paddingLeft = 30;
+      const paddingRight = 10;
+      const paddingTop = 10;
+      const paddingBottom = 25;
+
+      const xs = data.map((_, i) => i);
+      const ys = data.map(d => d.weight);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const rangeY = maxY - minY || 1;
+
+      const minX = 0;
+      const maxX = xs.length - 1 || 1;
+      const rangeX = maxX - minX || 1;
+
+      function xToPx(x) {
+        const t = (x - minX) / rangeX;
+        return paddingLeft + t * (width - paddingLeft - paddingRight);
+      }
+
+      function yToPx(y) {
+        const t = (y - minY) / rangeY;
+        // y 越大，图上越往下，所以用 (1 - t)
+        return paddingTop + (1 - t) * (height - paddingTop - paddingBottom);
+      }
+
+      // 画坐标轴
+      ctx.strokeStyle = "#ccc";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(paddingLeft, paddingTop);
+      ctx.lineTo(paddingLeft, height - paddingBottom);
+      ctx.lineTo(width - paddingRight, height - paddingBottom);
+      ctx.stroke();
+
+      // 画折线
+      ctx.strokeStyle = "#007aff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      xs.forEach((x, i) => {
+        const px = xToPx(x);
+        const py = yToPx(ys[i]);
+        if (i === 0) {
+          ctx.moveTo(px, py);
+        } else {
+          ctx.lineTo(px, py);
+        }
+      });
+      ctx.stroke();
+
+      // 画点
+      ctx.fillStyle = "#007aff";
+      xs.forEach((x, i) => {
+        const px = xToPx(x);
+        const py = yToPx(ys[i]);
+        ctx.beginPath();
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // 画 y 轴标签（最小值和最大值）
+      ctx.fillStyle = "#666";
+      ctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI'";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillText(minY.toFixed(1), paddingLeft - 4, yToPx(minY));
+      if (maxY !== minY) {
+        ctx.fillText(maxY.toFixed(1), paddingLeft - 4, yToPx(maxY));
+      }
+
+      // 画 x 轴日期（首尾）
+      const firstDate = data[0].date.slice(5);
+      const lastDate = data[data.length - 1].date.slice(5);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(firstDate, xToPx(xs[0]), height - paddingBottom + 4);
+      if (xs.length > 1) {
+        ctx.fillText(lastDate, xToPx(xs[xs.length - 1]), height - paddingBottom + 4);
+      }
+    }
+
+    function init() {
+      const input = document.getElementById("weightInput");
+      const saveBtn = document.getElementById("saveBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const statusEl = document.getElementById("status");
+
+      let data = loadData();
+      renderStats(data);
+
+      // 默认填入今天最后一次记录的体重
+      const todayStr = formatDate(new Date());
+      const todayRecord = data.find(d => d.date === todayStr);
+      if (todayRecord) {
+        input.value = todayRecord.weight;
+      }
+
+      saveBtn.addEventListener("click", () => {
+        const v = parseFloat(input.value);
+        if (isNaN(v)) {
+          statusEl.textContent = "请输入数字格式的体重，例如 63.5";
+          return;
+        }
+        const today = formatDate(new Date());
+        const existing = data.find(d => d.date === today);
+        if (existing) {
+          existing.weight = v;
+        } else {
+          data.push({ date: today, weight: v });
+        }
+        data.sort((a, b) => a.date.localeCompare(b.date));
+        saveData(data);
+        renderStats(data);
+        statusEl.textContent = `已保存 ${today}：${v.toFixed(1)} kg`;
+      });
+
+      clearBtn.addEventListener("click", () => {
+        if (!confirm("确定要清除所有记录吗？此操作不可恢复。")) return;
+        data = [];
+        saveData(data);
+        renderStats(data);
+        input.value = "";
+        statusEl.textContent = "所有数据已清除。";
+      });
+    }
+
+    window.addEventListener("load", init);
+    window.addEventListener("resize", () => {
+      const data = loadData();
+      renderStats(data);
+    });
+  </script>
+</body>
+</html>
