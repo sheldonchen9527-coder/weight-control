@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -64,6 +63,41 @@
       color: #666;
       font-size: 0.85rem;
     }
+
+    /* 新增一点 UI 优化 */
+    body {
+      background: #f5f6fa;
+    }
+    .card {
+      background: #ffffff;
+      max-width: 480px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .btn-row {
+      margin: 8px 0 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    button {
+      background: #007aff;
+      color: #fff;
+    }
+    #clearBtn {
+      background: #f2f2f7;
+      color: #333;
+    }
+    #saveTargetBtn {
+      background: #34c759;
+      color: #fff;
+    }
+    #targetDiff.target-above {
+      color: #d6336c; /* 当前比目标重，偏红一点 */
+    }
+    #targetDiff.target-below {
+      color: #2f9e44; /* 当前比目标轻，偏绿一点 */
+    }
   </style>
 </head>
 <body>
@@ -72,8 +106,16 @@
   <div class="card">
     <label for="weightInput">今天体重（kg）：</label>
     <input type="number" id="weightInput" step="0.1" placeholder="例如 63.5" />
-    <button id="saveBtn">保存今天</button>
-    <button id="clearBtn">清除所有数据</button>
+
+    <label for="targetInput" style="display:block;margin-top:6px;">目标体重（kg）：</label>
+    <input type="number" id="targetInput" step="0.1" placeholder="例如 60" />
+
+    <div class="btn-row">
+      <button id="saveBtn">保存今天</button>
+      <button id="saveTargetBtn">保存目标</button>
+      <button id="clearBtn">清除所有数据</button>
+    </div>
+
     <div id="status" class="muted"></div>
   </div>
 
@@ -85,6 +127,7 @@
       <div class="stat-line">最重体重：<span id="maxWeight">-</span></div>
       <div class="stat-line">平均体重：<span id="avgWeight">-</span></div>
       <div class="stat-line">总体变化：<span id="overallChange">-</span></div>
+      <div class="stat-line">距离目标（当前 - 目标）：<span id="targetDiff">未设置</span></div>
       <div class="stat-line">最近 7 天变化：<span id="weekChange">-</span></div>
     </div>
   </div>
@@ -97,6 +140,7 @@
 
   <script>
     const STORAGE_KEY = "weight-tracker-data-v1";
+    const TARGET_KEY = "weight-tracker-target-v1";
 
     function loadData() {
       try {
@@ -114,6 +158,21 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }
 
+    function loadTarget() {
+      try {
+        const txt = localStorage.getItem(TARGET_KEY);
+        if (!txt) return null;
+        const v = parseFloat(txt);
+        return isNaN(v) ? null : v;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveTarget(v) {
+      localStorage.setItem(TARGET_KEY, String(v));
+    }
+
     function formatDate(d) {
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -128,6 +187,7 @@
       const avgWeightEl = document.getElementById("avgWeight");
       const overallChangeEl = document.getElementById("overallChange");
       const weekChangeEl = document.getElementById("weekChange");
+      const targetDiffEl = document.getElementById("targetDiff");
 
       if (!data.length) {
         daysCountEl.textContent = "0";
@@ -136,6 +196,10 @@
         avgWeightEl.textContent = "-";
         overallChangeEl.textContent = "-";
         weekChangeEl.textContent = "-";
+        if (targetDiffEl) {
+          targetDiffEl.textContent = "未设置";
+          targetDiffEl.classList.remove("target-above", "target-below");
+        }
         drawChart([]);
         return;
       }
@@ -156,6 +220,24 @@
       maxWeightEl.textContent = max.toFixed(1) + " kg";
       avgWeightEl.textContent = avg.toFixed(1) + " kg";
       overallChangeEl.textContent = (overallChange >= 0 ? "+" : "") + overallChange.toFixed(1) + " kg";
+
+      // 目标体重差值（当前 - 目标）
+      const target = loadTarget();
+      if (targetDiffEl) {
+        targetDiffEl.classList.remove("target-above", "target-below");
+        if (target != null && !isNaN(target)) {
+          const current = weights[weights.length - 1];
+          const diffToTarget = current - target;
+          targetDiffEl.textContent = (diffToTarget >= 0 ? "+" : "") + diffToTarget.toFixed(1) + " kg";
+          if (diffToTarget > 0.05) {
+            targetDiffEl.classList.add("target-above"); // 比目标重
+          } else if (diffToTarget < -0.05) {
+            targetDiffEl.classList.add("target-below"); // 比目标轻
+          }
+        } else {
+          targetDiffEl.textContent = "未设置";
+        }
+      }
 
       // 最近 7 天变化
       if (data.length >= 7) {
@@ -188,7 +270,7 @@
       if (!data.length) {
         ctx.fillStyle = "#666";
         ctx.font = "14px -apple-system, BlinkMacSystemFont, 'Segoe UI'";
-        ctx.fillText("暂无数据", 10, 24);
+        ctx.fillText("暂无数据，先记录几天试试吧～", 10, 24);
         return;
       }
 
@@ -214,11 +296,10 @@
 
       function yToPx(y) {
         const t = (y - minY) / rangeY;
-        // y 越大，图上越往下，所以用 (1 - t)
         return paddingTop + (1 - t) * (height - paddingTop - paddingBottom);
       }
 
-      // 画坐标轴
+      // 坐标轴
       ctx.strokeStyle = "#ccc";
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -227,7 +308,7 @@
       ctx.lineTo(width - paddingRight, height - paddingBottom);
       ctx.stroke();
 
-      // 画折线
+      // 折线
       ctx.strokeStyle = "#007aff";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -242,7 +323,7 @@
       });
       ctx.stroke();
 
-      // 画点
+      // 小圆点
       ctx.fillStyle = "#007aff";
       xs.forEach((x, i) => {
         const px = xToPx(x);
@@ -252,7 +333,7 @@
         ctx.fill();
       });
 
-      // 画 y 轴标签（最小值和最大值）
+      // 最小/最大值文字
       ctx.fillStyle = "#666";
       ctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI'";
       ctx.textAlign = "right";
@@ -275,7 +356,9 @@
 
     function init() {
       const input = document.getElementById("weightInput");
+      const targetInput = document.getElementById("targetInput");
       const saveBtn = document.getElementById("saveBtn");
+      const saveTargetBtn = document.getElementById("saveTargetBtn");
       const clearBtn = document.getElementById("clearBtn");
       const statusEl = document.getElementById("status");
 
@@ -287,6 +370,12 @@
       const todayRecord = data.find(d => d.date === todayStr);
       if (todayRecord) {
         input.value = todayRecord.weight;
+      }
+
+      // 加载目标体重
+      const target = loadTarget();
+      if (target != null && !isNaN(target) && targetInput) {
+        targetInput.value = target.toFixed(1);
       }
 
       saveBtn.addEventListener("click", () => {
@@ -308,12 +397,26 @@
         statusEl.textContent = `已保存 ${today}：${v.toFixed(1)} kg`;
       });
 
+      if (saveTargetBtn) {
+        saveTargetBtn.addEventListener("click", () => {
+          const v = parseFloat(targetInput.value);
+          if (isNaN(v)) {
+            statusEl.textContent = "请输入数字格式的目标体重，例如 60";
+            return;
+          }
+          saveTarget(v);
+          const latestData = loadData();
+          renderStats(latestData);
+          statusEl.textContent = `已保存目标体重：${v.toFixed(1)} kg`;
+        });
+      }
+
       clearBtn.addEventListener("click", () => {
         if (!confirm("确定要清除所有记录吗？此操作不可恢复。")) return;
         data = [];
         saveData(data);
         renderStats(data);
-        input.value = "";
+        if (input) input.value = "";
         statusEl.textContent = "所有数据已清除。";
       });
     }
