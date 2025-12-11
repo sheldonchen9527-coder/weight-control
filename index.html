@@ -54,6 +54,10 @@
       cursor: pointer;
     }
     button:active { transform: scale(0.98); }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
     #saveBtn { background: #007aff; color: #fff; }
     #saveTargetBtn { background: #34c759; color: #fff; }
     #clearBtn { background: #f2f2f7; color: #333; }
@@ -81,10 +85,23 @@
     #targetDiff.target-below {
       color: #2f9e44;
     }
+    /* 打针提醒样式 */
+    #injectReminder {
+      font-size: 0.95rem;
+    }
+    #injectReminder.inject-today {
+      color: #d6336c;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
   <h1>体重记录小工具</h1>
+
+  <!-- 每周三打针提醒 -->
+  <div class="card">
+    <div id="injectReminder">💉 加载中...</div>
+  </div>
 
   <div class="card">
     <label for="weightInput">今天体重（kg）：</label>
@@ -245,10 +262,10 @@
         return;
       }
 
-      const paddingLeft   = 30;
+      const paddingLeft   = 34;
       const paddingRight  = 10;
       const paddingTop    = 10;
-      const paddingBottom = 25;
+      const paddingBottom = 50; // 给日期留空间
 
       const xs = data.map((_,i) => i);
       const ys = data.map(d => d.weight);
@@ -306,14 +323,37 @@
         ctx.fillText(maxY.toFixed(1), paddingLeft - 4, yToPx(maxY));
       }
 
-      // x 轴日期（首尾）
+      // x 轴日期：每个点下面写 MM-DD
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      const firstDate = data[0].date.slice(5);
-      const lastDate  = data[data.length-1].date.slice(5);
-      ctx.fillText(firstDate, xToPx(0), height - paddingBottom + 4);
-      if (xs.length > 1) {
-        ctx.fillText(lastDate, xToPx(maxX), height - paddingBottom + 4);
+      ctx.font = "10px -apple-system";
+      data.forEach((d, i) => {
+        const label = d.date.slice(5); // 只显示 月-日
+        const px = xToPx(i);
+        const py = height - paddingBottom + 2;
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(-Math.PI / 4); // 斜着一点，避免太挤
+        ctx.fillText(label, 0, 0);
+        ctx.restore();
+      });
+    }
+
+    function renderInjectionReminder() {
+      const el = document.getElementById("injectReminder");
+      const today = new Date();
+      const day = today.getDay(); // 0=周日,1=周一,...,3=周三
+
+      if (!el) return;
+
+      if (day === 3) {
+        el.textContent = "💉 今天是周三，记得打针";
+        el.classList.add("inject-today");
+      } else {
+        const diff = (3 - day + 7) % 7;
+        const days = diff === 0 ? 7 : diff;
+        el.textContent = `💉 距离下一个周三还有 ${days} 天`;
+        el.classList.remove("inject-today");
       }
     }
 
@@ -325,14 +365,23 @@
       const clearBtn     = document.getElementById("clearBtn");
       const statusEl     = document.getElementById("status");
 
+      renderInjectionReminder(); // 每次打开页面时更新打针提醒
+
       let data = loadData();
       renderStats(data);
 
-      // 今天已有记录时自动填入
       const todayStr = formatDate(new Date());
       const todayRecord = data.find(d => d.date === todayStr);
+
+      // 如果今天已经有记录：填上体重+禁用保存按钮
       if (todayRecord) {
-        input.value = todayRecord.weight;
+        if (input) input.value = todayRecord.weight;
+        if (saveBtn) {
+          saveBtn.disabled = true;
+        }
+        if (statusEl) {
+          statusEl.textContent = `今天已经记录过体重：${todayRecord.weight.toFixed(1)} kg`;
+        }
       }
 
       // 加载目标体重
@@ -342,6 +391,10 @@
       }
 
       saveBtn.addEventListener("click", () => {
+        if (saveBtn.disabled) {
+          statusEl.textContent = "今天已经记录过了，不能重复保存。";
+          return;
+        }
         const v = parseFloat(input.value);
         if (isNaN(v)) {
           statusEl.textContent = "请输入数字格式的体重，例如 63.5";
@@ -349,12 +402,19 @@
         }
         const today = formatDate(new Date());
         const existing = data.find(d => d.date === today);
-        if (existing) existing.weight = v;
-        else data.push({ date: today, weight: v });
+        if (existing) {
+          // 已有记录则不允许覆盖
+          statusEl.textContent = "今天已经有记录，无法再次保存。";
+          saveBtn.disabled = true;
+          return;
+        } else {
+          data.push({ date: today, weight: v });
+        }
         data.sort((a,b)=>a.date.localeCompare(b.date));
         saveData(data);
         renderStats(data);
         statusEl.textContent = `已保存 ${today}：${v.toFixed(1)} kg`;
+        saveBtn.disabled = true; // 保存成功后禁用
       });
 
       saveTargetBtn.addEventListener("click", () => {
@@ -376,6 +436,7 @@
         renderStats(data);
         input.value = "";
         statusEl.textContent = "所有数据已清除。";
+        saveBtn.disabled = false; // 清空后允许重新记录
       });
     }
 
